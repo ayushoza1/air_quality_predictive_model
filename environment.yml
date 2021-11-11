@@ -1,0 +1,19 @@
+name: pp-proj2
+channels:
+    - anaconda
+    - conda-forge
+    - defaults
+dependencies:
+    - python=3.8
+    - numpy
+    - scipy
+    - matplotlib
+    - pandas
+    - seaborn
+    - requests
+    - jupyter
+    - ipykernel
+    - ipywidgets
+    - pip
+    - pip:
+        - py-openaq
