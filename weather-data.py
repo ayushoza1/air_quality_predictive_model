@@ -1,26 +1,32 @@
-import openaq
 import sys
+from pandas.core.frame import DataFrame
 import requests
 import datetime as dt
+from meteostat import Point
+from meteostat import Daily 
+import matplotlib.pyplot as plt
 
-openweathermap_api_key = '8894806b2a698231a8197f03b65d4762'
 cities_of_interest = {"Akureyri": "IS", "London": "GB", 
     "Mexico City": "MX", "Newcastle": "GB", "Reykjavík":"IS"}
 
-input = "Mexico City" #input(f"Please enter one of {cities_of_interest} \n")
+input = input(f"Please enter one of {cities_of_interest} \n")
 
 if input not in cities_of_interest.keys():
     raise Exception("Bad user, give me the city")
 
-def filter_results_to_country(geoapi_response_data):
-    print("fubbus")
-    #1 fish out the coords and population
-    #2 order by pop and return first item.
+def filter_results_to_country(geoapi_response_data, city):
+    #If there are multiple cities with the same name, we choose the most populated
+    filter_by_country = [resp for resp in geoapi_response_data if resp['country_code'] == cities_of_interest[city]]
+    # 
+    sorted_by_pop = sorted(filter_by_country, key = lambda resp: resp['population'] if 'population' in resp else 0, reverse=True)
+    result = sorted_by_pop[0]
 
-def query_lat_long(name):
-    #TODO: CACHE?
+    # Relevant subset of the result dict
+    return {key: result[key] for key in ('latitude', 'longitude', 'elevation', 'population')}
+
+def query_lat_long(city):
     params_dict = {
-        'name': name,
+        'name': city,
         #Default is 10 but since newcastle gives 9, we might hit the limit
         'count': 100
     }
@@ -30,33 +36,31 @@ def query_lat_long(name):
     resp = requests.get('https://geocoding-api.open-meteo.com/v1/search', params_dict)
     data = resp.json()
     
-    return filter_results_to_country(data['results'])
+    return filter_results_to_country(data['results'], city)
 
-def query_historical_weather(city_and_country):
+def query_historical_weather(lat_long_elevation):
     now = dt.datetime.now()
-    five_day_delta = dt.timedelta(days=4)
-    five_days_ago = now - five_day_delta
-    five_days_ago_unix = int(five_days_ago.timestamp())
+    three_year_weeks = 52*3
+    three_year_delta = dt.timedelta(weeks=three_year_weeks)
+    five_days_ago = now - three_year_delta 
+    location = Point(
+        lat_long_elevation['latitude'], 
+        lat_long_elevation['longitude'], 
+        lat_long_elevation['elevation'])
 
-    city_country = "London,UK"
-    params_dict = {
-        'lat': '51.509865',
-        'lon': '-0.136439',
-        'units': 'metric',
-        'dt': five_days_ago_unix,
-        'appid': openweathermap_api_key
-    }
-        #lat={lat}&lon={lon}&dt={time}&appid={API key}
+    daily = Daily(location, start=five_days_ago, end=now)
+    
+    # Ask meteostat to fill in any gaps in the data
+    daily.normalize()
+    data = daily.fetch()
+    
+    #tavg=Temp average (C).prcp=Total precipitation(mm). wdir=Wind direction(degrees)
+    #wspd=Average wind speed(km/h).wpgt=Wind peak gust(km/hr). pres=Sea-level air pressure(hpa)
+    return data[['tavg', 'prcp', 'wdir', 'wspd', 'wpgt', 'pres']]
 
-    resp = requests.get('https://api.openweathermap.org/data/2.5/onecall/timemachine', params_dict)
+def get_weather(city_country):
+    coords = query_lat_long(city_country)
+    return query_historical_weather(coords)
 
-    print("fubbus")
-
-
-lat_long = query_historical_weather(input)
-print(lat_long)
-
-#api = openaq.OpenAQ()
-#status, resp = api.sources()
-#res = resp['results']
-#print(res)
+data = get_weather(input)
+print(data)
