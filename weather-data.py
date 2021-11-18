@@ -1,7 +1,9 @@
 import openaq
 import sys
 import requests
+import datetime as dt
 
+openweathermap_api_key = '8894806b2a698231a8197f03b65d4762'
 cities_of_interest = {"Akureyri": "IS", "London": "GB", 
     "Mexico City": "MX", "Newcastle": "GB", "Reykjavík":"IS"}
 
@@ -30,7 +32,28 @@ def query_lat_long(name):
     
     return filter_results_to_country(data['results'])
 
-lat_long = query_lat_long(input)
+def query_historical_weather(city_and_country):
+    now = dt.datetime.now()
+    five_day_delta = dt.timedelta(days=4)
+    five_days_ago = now - five_day_delta
+    five_days_ago_unix = int(five_days_ago.timestamp())
+
+    city_country = "London,UK"
+    params_dict = {
+        'lat': '51.509865',
+        'lon': '-0.136439',
+        'units': 'metric',
+        'dt': five_days_ago_unix,
+        'appid': openweathermap_api_key
+    }
+        #lat={lat}&lon={lon}&dt={time}&appid={API key}
+
+    resp = requests.get('https://api.openweathermap.org/data/2.5/onecall/timemachine', params_dict)
+
+    print("fubbus")
+
+
+lat_long = query_historical_weather(input)
 print(lat_long)
 
 #api = openaq.OpenAQ()
