@@ -13,6 +13,7 @@ dependencies:
     - requests
     - jupyter
     - ipykernel
+    - scikit-learn
     - ipywidgets
     - pip
     - pip:
