@@ -1,4 +1,3 @@
-from pandas.core.frame import DataFrame
 import pandas as pd
 import openaq
 import requests
@@ -17,71 +16,90 @@ def fetch_weather_data(city_name, date_from=date.today() - timedelta(30), date_t
 
     '''
     #We limit to the 5 cities above
-    city_and_country = sanitize_city(city_name)
+    city_country = get_city_country(city_name)
 
     #Since both the weather api and pandas dataframe operate on the datetime level
     #cast date to datetime early 
-    midnight_time = dt.min.time()
-    dt_from = dt.combine(date_from, midnight_time)
-    dt_to = dt.combine(date_to, midnight_time)
+    dt_from = cast_date_to_datetime(date_from)
+    dt_to = cast_date_to_datetime(date_to)
 
-    weather = fetch_weather_from_csv(city_and_country[0], dt_from= dt_from, dt_to=dt_to)
+    weather = fetch_data_from_csv('weather', city_country[0], dt_from= dt_from, dt_to=dt_to)
 
     if(weather.empty):
-        weather = fetch_weather_from_api(city_and_country, dt_from, dt_to)
+        weather = fetch_data_from_api('weather', city_country, dt_from, dt_to)
     #The complicated case is: a file exists but not all the data is there
     elif(needs_more_data(weather, dt_from, dt_to)):
-        weather = partial_csv_update(city_and_country, dt_from, dt_to)
+        weather = partial_csv_update('weather', weather, city_country)
     return weather
 
-def fetch_pollution_data(city_name, date_fromd=date.today() - timedelta(days=30), date_to=date.today()):
-    return "some pollution"
+def fetch_pollution_data(city_name, date_from=date.today() - timedelta(days=30), date_to=date.today()):
+
+    city_country = get_city_country(city_name)
+
+    #Since both the weather api and pandas dataframe operate on the datetime level
+    #cast date to datetime early 
+    dt_from = cast_date_to_datetime(date_from)
+    dt_to = cast_date_to_datetime(date_to)
+
+    pollution = fetch_data_from_csv('pollution', city_country[0], dt_from = dt_from, dt_to = dt_to)
+
+    if(pollution.empty):
+        pollution = fetch_data_from_api('pollution', city_country, dt_from, dt_to)
+    elif(needs_more_data(pollution, dt_from, dt_to)):
+        pollution = partial_csv_update('pollution', pollution, city_country)
+    return pollution 
+
+def cast_date_to_datetime(date):
+    midnight_time = dt.min.time()
+    return dt.combine(date, midnight_time)
 
 def needs_more_data(data, dt_from, dt_to):
     delta_days = (dt_to - dt_from).days + 1
     data_subset = data[(dt_from <= data.index) & (data.index <= dt_to)]
     return len(data_subset) < delta_days
 
-def sanitize_city(city_name):
+def get_city_country(city_name):
     if city_name not in cities_of_interest.keys():
         raise Exception(f"Please enter one of {cities_of_interest}.")
     return (city_name, cities_of_interest[city_name])
 
-def fetch_weather_from_csv(city_name, **kwargs):
-    file_dir = data_dirs["weather"]
+def fetch_data_from_csv(type, city_name, **kwargs):
+    file_dir = data_dirs[type]
     
     #Empty dataframe for when there is no csv file
-    weather_data = pd.DataFrame({'' : []})
+    data = pd.DataFrame({'' : []})
 
     try:
-        weather_data = pd.read_csv(f'{file_dir}/{city_name}.csv', index_col='date', parse_dates=['date'])
+        data = pd.read_csv(f'{file_dir}/{city_name}.csv', index_col='date', parse_dates=['date'])
         if (kwargs):
-            return weather_data[(kwargs['dt_from'] <= weather_data.index) & (weather_data.index <= kwargs['dt_to'])]
+            return data[(kwargs['dt_from'] <= data.index) & (data.index <= kwargs['dt_to'])]
     except FileNotFoundError:
-        print("No historical weather data found locally. Using API to get fresh data.")
-    return weather_data
+        print(f"No historical {type} data found locally. Using API to get fresh data.\n")
+    return data
 
-def fetch_weather_from_api(city_and_country, date_from, date_to):
+def fetch_data_from_api(type, city_and_country, date_from, date_to):
     # The first part of the tuple is the city and our csv data is organized by city name.
     city_coords = query_lat_long(city_and_country)
-    data = query_historical_weather(city_coords, date_from, date_to)
+
+    if(type=='weather'):
+        data = query_historical_weather(city_coords, date_from, date_to)
+    elif(type=='pollution'):
+        data = query_historical_polluiton(city_and_country, date_from, date_to)
 
     #Write new csv file
-    dir_name = data_dirs['weather']
+    dir_name = data_dirs[type]
     data.to_csv(f'{dir_name}/{city_and_country[0]}.csv')
     return data
 
-def partial_csv_update(city_and_country, dt_from, dt_to):
+def partial_csv_update(type, from_api, city_and_country):
     #Note that this is all of our CSV data for the city. no time filter
-    from_file = fetch_weather_from_csv(city_and_country[0])
+    from_file = fetch_data_from_csv(type, city_and_country[0])
 
-    #We time filter here because we know the missing data is in the range [dt_from, dt_to]
-    from_api = fetch_weather_from_api(city_and_country, dt_from, dt_to)
     total_data = pd.concat([from_file, from_api])
     unique_days = total_data.drop_duplicates()
     unique_days = unique_days.sort_values('date')
 
-    dir_name = data_dirs['weather']
+    dir_name = data_dirs[type]
     unique_days.to_csv(f'{dir_name}/{city_and_country[0]}.csv')
     return unique_days
 
@@ -161,7 +179,7 @@ def filter_results_to_country(geoapi_response_data, country):
     # Relevant subset of the result dict
     return {key: result[key] for key in ('latitude', 'longitude', 'elevation', 'population')}
 
-def measurement_to_csv(city_country, date_from, date_to):
+def query_historical_polluiton(city_country, date_from, date_to):
     '''
     This function takes in a city, parameter and date and writes data into a csv.file
     Input:
@@ -171,8 +189,7 @@ def measurement_to_csv(city_country, date_from, date_to):
         date_to: Measures until this date will be calculated
     '''
     
-    # Fetch the api
-    # http://dhhagan.github.io/py-openaq/api.html
+    # Explicitly use v2 of the api http://dhhagan.github.io/py-openaq/api.html
     api = openaq.OpenAQ(version ='v2')
     # Get the longitude and latitude for the city
     location = query_lat_long(city_country)
@@ -182,14 +199,11 @@ def measurement_to_csv(city_country, date_from, date_to):
     locations = api.locations(coordinates = coords,radius = 10000,df = True)
 
     min_date = locations["firstUpdated"].min()
-    
     min_date = min_date.tz_convert(None)
-    
     min_date = pd.to_datetime(min_date) 
     
     if min_date > date_from:
-        date_from = min_date
-    
+        date_from = min_date  
     
     # Number of days we want measurements for
     day_diff = (date_to - date_from).days
@@ -203,12 +217,12 @@ def measurement_to_csv(city_country, date_from, date_to):
     # Initialize the start date
     start = date_from
 
-    # Add measurements to csv file 30 days at a time
+    # Add measurements data frame 30 days at a time
     # An extra iteration for the remaining <30 days
     for n in range(number_months + 1):
         
         # Find the end date
-        end = start + dt.timedelta(days = split_days)
+        end = start + timedelta(days = split_days)
         
         # Fetch the data from the measurment api
         df_api = api.measurements(coordinates = coords, radius = 5000, df = True, 
@@ -230,18 +244,18 @@ def measurement_to_csv(city_country, date_from, date_to):
     # Change the index
     df.index.name = 'Date.local'
     df.reset_index(inplace=True)
-    df['Date'] = df['Date.local'].dt.strftime('%Y-%m-%d')
+    df['date'] = df['Date.local'].dt.strftime('%Y-%m-%d')
     df['value'] = df['value'].astype(float, errors = 'raise')
 
     # Calculate mean, max and min value for each date
-    Result_mean = df.groupby(['Date', 'parameter'],as_index=False)['value'].mean()
-    Result_max = df.groupby(['Date', 'parameter'],as_index=False)['value'].max()
-    Result_min = df.groupby(['Date', 'parameter'],as_index=False)['value'].min()
+    Result_mean = df.groupby(['date', 'parameter'],as_index=False)['value'].mean()
+    Result_max = df.groupby(['date', 'parameter'],as_index=False)['value'].max()
+    Result_min = df.groupby(['date', 'parameter'],as_index=False)['value'].min()
 
     # Pivot the tables to wide format
-    ResultWide_mean = Result_mean.pivot_table(index='Date',columns='parameter', values='value')
-    ResultWide_max = Result_max.pivot_table(index='Date',columns='parameter', values='value')
-    ResultWide_min = Result_min.pivot_table(index='Date',columns='parameter', values='value')
+    ResultWide_mean = Result_mean.pivot_table(index='date',columns='parameter', values='value')
+    ResultWide_max = Result_max.pivot_table(index='date',columns='parameter', values='value')
+    ResultWide_min = Result_min.pivot_table(index='date',columns='parameter', values='value')
 
     # Rename the columns to distinguish
     ResultWide_mean.rename(columns={"pm10": 'pm10_mean', 'pm25': 'pm25_mean'}, inplace=True)
@@ -255,14 +269,11 @@ def measurement_to_csv(city_country, date_from, date_to):
     ResultWide = pd.merge(df_first_join, ResultWide_min, left_index=True, right_index=True)
 
     # Change the index (Can we drop the ID column?)
-    ResultWide.index.name = 'Date'
+    ResultWide.index.name = 'date'
     ResultWide.reset_index(inplace=True)
     ResultWide.index.name = 'ID'
 
-    # Write to a file  
-    Path = f'Data_measurements/{city_country}.csv'
-    ResultWide.to_csv(Path)
-    
+    return ResultWide 
     
 # Call the function
 city = 'London'
@@ -270,4 +281,7 @@ date_from = pd.to_datetime('2020-01-01')
 date_to = pd.to_datetime('2021-05-01')
 
 #measurement_to_csv(city,date_from,date_to)
-data = fetch_weather_data(city, date_from=date.today() - timedelta(days=365))
+weather_data = fetch_weather_data(city, date_from=date.today() - timedelta(days=365))
+pollution_data = fetch_pollution_data(city)
+
+fubbus = "Fubbus"
